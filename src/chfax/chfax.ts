@@ -12,11 +12,17 @@ const ip = "108.1.14.160"
 const prefix = `http://${ip}:8080/ums`
 const loginForm = `${prefix}/Login.do`
 const loginMain = `${prefix}/LoginForm.do`
-const listForm = `${prefix}/FsReceivedForm.do`
+const listForm = `${prefix}/FsReceivedSearch.do`
 const mainForm = `${prefix}/MainStartForm.do`
 const id = "환경정책"
 const pw = "1"
 export default class ChFax {
+    public static toYMD(stamp:number, sep = "") {
+        const date = new Date(stamp)
+        return `${date.getFullYear()}${sep}${
+            (date.getMonth() + 1).toString(10).padStart(2, "0")}${sep}${
+            date.getDate().toString(10).padStart(2, "0")}`
+    }
     private static encode(str:string | Buffer,
         fromEncoding:"utf-8" | "euc-kr", toEncoding:"utf-8" | "euc-kr" = "utf-8"):Buffer {
         return encoding.convert(str, toEncoding, fromEncoding)
@@ -69,12 +75,6 @@ export default class ChFax {
             return new Date(year, month, day, hour, minute, second).getTime()
         }
         return -1
-    }
-    private static toYMD(stamp:number, sep = "") {
-        const date = new Date(stamp)
-        return `${date.getFullYear()}${sep}${
-            date.getMonth().toString(10).padStart(2, "0")}${sep}${
-            date.getDate().toString(10).padStart(2, "0")}`
     }
     public fetchCount = 12
     protected rawCookies:{[key in string]:Cookie}
@@ -189,7 +189,7 @@ export default class ChFax {
     }
     public async listFax(before = Date.now(), after = Date.now()) {
         // document.getElementById('date1').value=20181217&document.getElementById('date2').value=20181218
-        const fetchFaxes = async (page:number = 1) => {
+        const fetchFaxes = async (page:number = 1, oldest:FaxContent = null) => {
             const pm = {}
             const startDate = new Date(Math.min(before, after))
             const endDate = new Date(Math.max(before, after))
@@ -197,19 +197,26 @@ export default class ChFax {
             pm[encodeURI("document.getElementById('date2').value")] = ChFax.toYMD(endDate.getTime())
             const paramURL = querystring.stringify(pm, "&", "=", {encodeURIComponent: (v:string) => v})
             const addZero = (n:number) => n.toString(10).padStart(2, "0")
-            const resList = await this.reqPost(listForm, {
-                hd_page: page,
+            let param = {
+                hd_page: page + "",
                 hd_checkcnt: this.fetchCount,
-                hd_FrYear: startDate.getFullYear(),
+                hd_FrYear: startDate.getFullYear() + "",
                 hd_FrMon: addZero(startDate.getMonth() + 1),
                 hd_FrDay: addZero(startDate.getDate()),
-                hd_ToYear: endDate.getFullYear(),
+                hd_ToYear: endDate.getFullYear() + "",
                 hd_ToMon: addZero(endDate.getMonth() + 1),
                 hd_ToDay: addZero(endDate.getDate()),
                 date1: ChFax.toYMD(startDate.getTime(), "/"),
                 date2: ChFax.toYMD(endDate.getTime(), "/"),
                 hd_searchFlag: "all",
-            })
+            }
+            if (oldest != null) {
+                param = {
+                    ...param,
+                    ...oldest.getElement(this.fetchCount)
+                }
+            }
+            const resList = await this.reqPost(`${listForm}?${paramURL}`, param)
             const $ = cheerio.load(resList)
             // tslint:disable-next-line
             const parent = $("table[height='440']")
@@ -239,7 +246,8 @@ export default class ChFax {
         let index = 1
         const faxes:FaxContent[] = []
         while (true) {
-            const fetch = await fetchFaxes(index)
+            const last = faxes.length >= 1 ? faxes[0] : undefined
+            const fetch = await fetchFaxes(index, last)
             faxes.unshift(...fetch)
             if (fetch.length < this.fetchCount) {
                 break
