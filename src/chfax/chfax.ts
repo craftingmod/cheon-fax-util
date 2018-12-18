@@ -14,6 +14,7 @@ const loginForm = `${prefix}/Login.do`
 const loginMain = `${prefix}/LoginForm.do`
 const listForm = `${prefix}/FsReceivedSearch.do`
 const mainForm = `${prefix}/MainStartForm.do`
+const memoForm = `${prefix}/FsReceivedMemoSave.do`
 const id = "환경정책"
 const pw = "1"
 export default class ChFax {
@@ -187,9 +188,14 @@ export default class ChFax {
             totalFax,
         }
     }
+    /**
+     * Fetch faxes ordered by `[0] old -> new [last]`
+     * @param before The time search before (day)
+     * @param after The time search after (day)
+     */
     public async listFax(before = Date.now(), after = Date.now()) {
         // document.getElementById('date1').value=20181217&document.getElementById('date2').value=20181218
-        const fetchFaxes = async (page:number = 1, oldest:FaxContent = null) => {
+        const fetchFaxes = async (page:number = 1) => {
             const pm = {}
             const startDate = new Date(Math.min(before, after))
             const endDate = new Date(Math.max(before, after))
@@ -197,7 +203,7 @@ export default class ChFax {
             pm[encodeURI("document.getElementById('date2').value")] = ChFax.toYMD(endDate.getTime())
             const paramURL = querystring.stringify(pm, "&", "=", {encodeURIComponent: (v:string) => v})
             const addZero = (n:number) => n.toString(10).padStart(2, "0")
-            let param = {
+            const param = {
                 hd_page: page + "",
                 hd_checkcnt: this.fetchCount,
                 hd_FrYear: startDate.getFullYear() + "",
@@ -209,12 +215,6 @@ export default class ChFax {
                 date1: ChFax.toYMD(startDate.getTime(), "/"),
                 date2: ChFax.toYMD(endDate.getTime(), "/"),
                 hd_searchFlag: "all",
-            }
-            if (oldest != null) {
-                param = {
-                    ...param,
-                    ...oldest.getElement(this.fetchCount)
-                }
             }
             const resList = await this.reqPost(`${listForm}?${paramURL}`, param)
             const $ = cheerio.load(resList)
@@ -246,18 +246,42 @@ export default class ChFax {
         let index = 1
         const faxes:FaxContent[] = []
         while (true) {
-            const last = faxes.length >= 1 ? faxes[0] : undefined
-            const fetch = await fetchFaxes(index, last)
+            const fetch = await fetchFaxes(index)
             faxes.unshift(...fetch)
             if (fetch.length < this.fetchCount) {
                 break
             }
             index += 1
         }
+        faxes.sort((a, b) => {
+            if (a.dateid !== b.dateid) {
+                return a.dateid - b.dateid
+            } else {
+                const delta = a.uid - b.uid
+                if (delta > 0n) {
+                    return 0.5
+                } else if (delta < 0n) {
+                    return -0.5
+                } else {
+                    return 0
+                }
+            }
+        })
         for (const fax of faxes) {
             console.log(fax.name)
         }
-        console.log("stop")
+        return faxes
+    }
+    /**
+     * Change 
+     * @param fax 
+     * @param toName 
+     */
+    public async changeName(fax:FaxContent, toName:string) {
+        await this.reqPost(memoForm, {
+            ...fax.getElement(-1),
+            hd_memo: ChFax.encodeEUCKR(toName),
+        }, listForm)
     }
     protected makeCookie() {
         const reqCookie = request.jar()
