@@ -2,6 +2,7 @@ import cheerio from "cheerio"
 import encoding from "encoding"
 import entities from "html-entities"
 import http from "http"
+import path from "path"
 import querystring from "querystring"
 import req, { Cookie } from "request"
 import request from "request-promise-native"
@@ -9,14 +10,15 @@ import { FaxContent } from "./structure/faxcontent"
 
 type ParamArray = {[key in string]:string}
 const ip = "108.1.14.160"
-const prefix = `http://${ip}:8080/ums`
+const port = 8080
+const prefix = `http://${ip}:${port}/ums`
 const loginForm = `${prefix}/Login.do`
 const loginMain = `${prefix}/LoginForm.do`
 const listForm = `${prefix}/FsReceivedSearch.do`
 const mainForm = `${prefix}/MainStartForm.do`
 const memoForm = `${prefix}/FsReceivedMemoSave.do`
-const id = "환경정책"
-const pw = "1"
+const defaultid = "환경정책"
+const defaultpw = "1"
 export default class ChFax {
     public static toYMD(stamp:number, sep = "") {
         const date = new Date(stamp)
@@ -41,7 +43,8 @@ export default class ChFax {
         let out = str
         // space -> plus
         out = out.replace(/\s/ig, "+")
-        const uriRegex = /[A-Z a-z 0-9 ; , \/ ? : @ & = + $ \- _ . ! ~ * ' ( ) #]+/ig
+        // const uriRegex = /[A-Z a-z 0-9 ; , \/ ? : @ & = + $ \- _ . ! ~ * ' ( ) #]+/ig
+        const uriRegex = /[A-Z a-z 0-9]+/ig
         const escape = out.match(uriRegex)
         if (escape == null) {
             return encoder(str)
@@ -80,6 +83,12 @@ export default class ChFax {
     public fetchCount = 12
     protected rawCookies:{[key in string]:Cookie}
     protected agent:http.Agent
+    protected id:string
+    protected pw:string
+    public constructor(id:string = defaultid, pw:string = defaultpw) {
+        this.id = id
+        this.pw = pw
+    }
     /**
      * Request with EUC-KR parameters
      * @param url URL for request
@@ -107,7 +116,7 @@ export default class ChFax {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv:11.0) like Gecko",
                 "Referer": referer,
-                "Host": `${ip}:8080`,
+                "Host": `${ip}:${port}`,
                 "Content-Type": type === "POST" ? "application/x-www-form-urlencoded" : undefined,
             },
             jar: cookie,
@@ -133,8 +142,8 @@ export default class ChFax {
         })
         await this.reqGet(loginMain)
         const tryLogin = () => this.reqPost(loginForm, {
-            "tf_usid": ChFax.encodeEUCKR(id),
-            "tf_pwd": pw,
+            "tf_usid": ChFax.encodeEUCKR(this.id),
+            "tf_pwd": this.pw,
         }, loginMain)
         const res = await tryLogin()
         if (res.startsWith("<META HTTP-EQUIV='REFRESH'")) {
@@ -236,7 +245,7 @@ export default class ChFax {
                     dateid: keydate,
                     uid: keyuid,
                     name,
-                    filepath: keyname,
+                    filepath: `http://${ip}:${port}${keyname}`,
                     receiveTime: createTime,
                     checkTime,
                 })
