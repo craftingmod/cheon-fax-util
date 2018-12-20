@@ -15,8 +15,16 @@ export class FaxDaemon {
     protected faxEvent:FaxEvent
     protected printName:string
     protected printWhenReceive = true
-    public async start() {
-        this.faxEvent = await FaxEvent.newInstance()
+    protected eListener:(contents:FaxContent[]) => Promise<void>
+    public async start(ymdString?:string) {
+        if (ymdString != null) {
+            const year = Number.parseInt(ymdString.substr(0, 4))
+            const month = Number.parseInt(ymdString.substr(4, 2))
+            const day = Number.parseInt(ymdString.substr(6, 2))
+            this.faxEvent = await FaxEvent.newInstance(new Date(year, month, day).getTime())
+        } else {
+            this.faxEvent = await FaxEvent.newInstance()
+        }
         try {
             const pth = `${FaxEvent.getPath()}/printer.txt`
             await fsPromise.access(pth, fsPromise.constants.R_OK)
@@ -24,7 +32,7 @@ export class FaxDaemon {
         } catch {
             // :)
         }
-        this.faxEvent.on("create", async (contents:FaxContent[]) => {
+        this.eListener = async (contents:FaxContent[]) => {
             notifier.notify({
                 title: "새로운 Fax가 왔습니다.",
                 message: `${contents.map((v) => v.name).join(", ")}`,
@@ -33,12 +41,13 @@ export class FaxDaemon {
             if (this.printWhenReceive) {
                 await this.printFax(contents, false)
             }
-        })
-        this.listen()
+        }
+        this.faxEvent.on("create", this.eListener)
     }
-    protected async listen() {
+    public async listen() {
         while (true) {
-            const cmd = await new Promise<string>((res, rej) => {
+            /*
+            const cmd = await new Promise<string>(async (res, rej) => {
                 read({
                     prompt: chalk.rgb(207, 223, 249)("명령어 >"),
                 }, (err, result, isDefault) => {
@@ -49,6 +58,21 @@ export class FaxDaemon {
                     }
                 })
             })
+            */
+            const cmd = await prompt({
+                type: "autocomplete",
+                name: "cmd",
+                message: "명령어 >",
+                limit: 10,
+                suggest: (input, choices) => choices.filter((choice) => choice.message.startsWith(input)),
+                choices: [
+                    "exit",
+                    "help",
+                    "print",
+                    "setprinter",
+                    "time",
+                ],
+            } as any).then((ask) => ask["cmd"])
             const handle = await this.handleCommand(cmd)
             if (handle) {
                 break
@@ -62,7 +86,7 @@ export class FaxDaemon {
             return true
         }
         if (type === "help") {
-            const printCommand = (cmd:string, desc:string) => 
+            const printCommand = (cmd:string, desc:string) =>
                 console.log(`${chalk.rgb(249, 202, 134)(cmd)}: ${chalk.rgb(255, 231, 196)(desc)}`)
             printCommand("exit", "종료합니다.")
             printCommand("print", "문서를 프린터기로 출력합니다.")
@@ -82,10 +106,10 @@ export class FaxDaemon {
                 name: v.uidString,
                 message: `${chalk.rgb(247, 185, 208)(v.dateid.toString())}${
                     chalk.rgb(197, 232, 176)(v.uid.toString())}\t${
-                        v.name.substr(0, Math.min(v.name.length, 30))
+                    v.name.substr(0, Math.min(v.name.length, 30))
                     }`,
             }))
-            const res = await prompt<{selects:string[]}>({
+            const res = await prompt<{ selects:string[] }>({
                 type: "multiselect",
                 name: "selects",
                 message: "프린터할 문서를 선택해주세요. (Space 선택, Enter 확인)",
@@ -98,9 +122,9 @@ export class FaxDaemon {
                 console.log(chalk.redBright("프린트 성공"))
             }
         } else if (type === "setprinter") {
-            const printers:Array<{name:string}> = printer.getPrinters()
+            const printers:Array<{ name:string }> = printer.getPrinters()
             const names = printers.map((v) => v.name)
-            const res = await prompt<{selected:string}>({
+            const res = await prompt<{ selected:string }>({
                 type: "select",
                 name: "selected",
                 message: "사용할 프린터 기기를 선택해주세요",
@@ -108,6 +132,13 @@ export class FaxDaemon {
             })
             this.printName = res.selected
             fsPromise.writeFile(`${FaxEvent.getPath()}/printer.txt`, this.printName)
+        } else if (type.startsWith("day")) {
+            const date = type.match(/\d{8,8}/ig)
+            if (date != null) {
+                this.faxEvent.off("create", this.eListener)
+                await this.start(date[0])
+                console.log(chalk.redBright("아마도 설정완료!"))
+            }
         }
         return false
     }
@@ -189,7 +220,7 @@ export class FaxDaemon {
                     }
                 })
                 */
-               // no way to print. use native binary instead
+                // no way to print. use native binary instead
                 if (process.platform !== "win32") {
                     try {
                         await exec(`lpr -h -P ${this.printName} ${docpath}`)
@@ -198,7 +229,7 @@ export class FaxDaemon {
                         console.error(err)
                     }
                 } else {
-                   console.log("Sorry, not support.")
+                    console.log("Sorry, not support.")
                 }
             } catch (err) {
                 console.error(err)

@@ -9,8 +9,9 @@ import ChFax from "./chfax"
 import { FaxContent } from "./structure/faxcontent"
 
 export default class FaxEvent extends EventEmitter {
-    public static async newInstance() {
+    public static async newInstance(faxday:number = -1) {
         const ev = new FaxEvent()
+        ev.listDay = faxday
         await ev.init()
         return ev
     }
@@ -24,6 +25,7 @@ export default class FaxEvent extends EventEmitter {
         }
         return path.resolve(rootDir,`fax${fax == null ? "" : "/" + fax.dateid}`)
     }
+    public listDay = -1
     protected lastDate:number = 0
     protected lastUid:bigint = 0n
     protected timer:NodeJS.Timeout
@@ -53,7 +55,12 @@ export default class FaxEvent extends EventEmitter {
         this.watcher.on("change", (p:string) => this.syncName(p))
     }
     protected async checkNew(first = false) {
-        const faxes = await this.fax.listFax()
+        let faxes:FaxContent[]
+        if (this.listDay >= 0) {
+            faxes = await this.fax.listFax(this.listDay, this.listDay)
+        } else {
+            faxes = await this.fax.listFax()
+        }
         const alerts:FaxContent[] = []
         const modifies:FaxContent[] = []
         for (const fax of faxes) {
