@@ -14,7 +14,7 @@ export default class FaxEvent extends EventEmitter {
         await ev.init()
         return ev
     }
-    public static saveDir(fax?:FaxContent):string {
+    public static getPath(fax?:FaxContent):string {
         let rootDir = path.resolve(process.cwd())
         if (!rootDir.endsWith("cheon-fax-util")) {
             rootDir = path.resolve(".")
@@ -30,6 +30,9 @@ export default class FaxEvent extends EventEmitter {
     protected fax:ChFax
     protected contents:Map<bigint, FaxContent>
     protected watcher:chokidar.FSWatcher
+    public get faxes():Map<bigint, Readonly<FaxContent>> {
+        return this.contents
+    }
     protected constructor() {
         super()
         this.fax = new ChFax()
@@ -41,9 +44,10 @@ export default class FaxEvent extends EventEmitter {
         }
         this.on("create", this.syncDir.bind(this))
         this.on("init", this.syncDir.bind(this))
+        this.on("modify", this.syncDir.bind(this))
         await this.checkNew(true)
         this.timer = setTimeout(() => this.checkNew(), 30000)
-        this.watcher = chokidar.watch(FaxEvent.saveDir(), {
+        this.watcher = chokidar.watch(FaxEvent.getPath(), {
             ignored: /.+\.png/i,
         })
         this.watcher.on("change", (p:string) => this.syncName(p))
@@ -51,25 +55,45 @@ export default class FaxEvent extends EventEmitter {
     protected async checkNew(first = false) {
         const faxes = await this.fax.listFax()
         const alerts:FaxContent[] = []
+        const modifies:FaxContent[] = []
         for (const fax of faxes) {
             if (fax.dateid >= this.lastDate && fax.uid > this.lastUid && (first || fax.checkTime >= 0)) {
                 this.lastDate = fax.dateid
                 this.lastUid = fax.uid
                 alerts.push(fax)
+            } else if (!first && this.contents.has(BigInt(fax.uidString))) {
+                const before = this.contents.get(BigInt(fax.uidString))
+                if (before.name !== fax.name || before.checkTime !== fax.checkTime) {
+                    modifies.push(fax)
+                }
             }
         }
         if (alerts.length >= 1) {
             this.emit(first ? "init" : "create", alerts)
         }
+        if (modifies.length >= 1) {
+            this.emit("modify", modifies)
+        }
         if (this.timer != null) {
             clearTimeout(this.timer)
         }
         this.timer = setTimeout(() => this.checkNew(), 30000)
-        console.log(alerts.length)
     }
     private async syncName(p:string) {
-        const json = JSON.parse((await fsPromise.readFile(p)).toString())
-        let purePath = p.replace(FaxEvent.saveDir() + "/", "")
+        await new Promise<void>((res, rej) => {
+            setTimeout(res, 100)
+        })
+        try {
+            await fsPromise.access(p, fs.constants.R_OK)
+        } catch (err) {
+            console.error(err)
+        }
+        const byte = (await fsPromise.readFile(p)).toString()
+        const json = this.readConfig(byte)
+        if (byte.length <= 0) {
+            return
+        }
+        let purePath = p.replace(FaxEvent.getPath() + "/", "")
         purePath = purePath.substring(0, purePath.indexOf("/"))
         const editDate = BigInt(purePath)
         const toEdit:FaxContent[] = []
@@ -96,7 +120,7 @@ export default class FaxEvent extends EventEmitter {
         let fileList:string[] = null
         const exportMap:Map<number, {[key in string | number]:string}> = new Map()
         for (const fax of contents) {
-            const nPath = FaxEvent.saveDir(fax)
+            const nPath = FaxEvent.getPath(fax)
             // number prefix to identifier
             const prefix = fax.uid + "-"
             // make directory & read list first.
@@ -128,9 +152,23 @@ export default class FaxEvent extends EventEmitter {
                                 failOnError: true,
                                 page: i,
                             }).png().toBuffer()
-                        await fsPromise.writeFile(`${nPath}/${faxFilename}.${i}.png`, byteImage, {encoding: null})
+                        const imagePath = `${nPath}/${faxFilename}.${i}.png`
+                        fax.images.push(imagePath)
+                        await fsPromise.writeFile(imagePath, byteImage, {encoding: null})
                     } catch (err) {
                         // console.error(err)
+                        break
+                    }
+                }
+            }
+            if (fax.images.length <= 0) {
+                for (let i = 0; true; i += 1) {
+                    const testPath = `${nPath}/${faxFilename}.${i}.png`
+                    try {
+                        await fsPromise.access(testPath, fs.constants.R_OK)
+                        fax.images.push(testPath)
+                    } catch {
+                        // all found
                         break
                     }
                 }
@@ -144,19 +182,37 @@ export default class FaxEvent extends EventEmitter {
             exportMap.get(tid)[fax.uid.toString(10)] = fax.name
         }
         // export file
-        for (let [tid, exportObj] of exportMap.entries()) {
-            const faxTitle = `${FaxEvent.saveDir()}/${tid}/0faxinfo.txt`
+        for (const [tid, exportObj] of exportMap.entries()) {
+            const faxTitle = `${FaxEvent.getPath()}/${tid}/0faxinfo.txt`
             try {
                 await fsPromise.access(faxTitle, fs.constants.R_OK)
-                const json = JSON.parse((await fsPromise.readFile(faxTitle)).toString("utf-8"))
-                exportObj = {
-                    ...json,
-                    ...exportObj,
-                }
+                const txt = (await fsPromise.readFile(faxTitle)).toString("utf-8")
+                this.readConfig(txt, exportObj)
             } catch {
                 // no exists hmm
             }
-            await fsPromise.writeFile(faxTitle, JSON.stringify(exportObj, null, 4))
+            await fsPromise.writeFile(faxTitle, this.writeConfig(exportObj))
         }
+        console.log("Directory synced")
+    }
+    private readConfig(text:string, obj:{[key in string]:string} = {}) {
+        text.split("\n").map((v) => {
+            const prefix = v.match(/^\d+\s*:/i)
+            if (prefix != null) {
+                return [prefix[0].match(/\d+/)[0], v.replace(prefix[0], "").trimLeft()]
+            } else {
+                return null
+            }
+        }).filter((v) => v != null).forEach((v) => {
+            obj[v[0]] = v[1]
+        })
+        return obj
+    }
+    private writeConfig(obj:{[key in string]:string}) {
+        let out = ""
+        for (const [key, value] of Object.entries(obj)) {
+            out += key + ": " + value + "\n"
+        }
+        return out
     }
 }

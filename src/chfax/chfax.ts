@@ -40,11 +40,9 @@ export default class ChFax {
             }
             return "%" + hexes.join("%")
         }
-        let out = str
-        // space -> plus
-        out = out.replace(/\s/ig, "+")
+        const out = str
         // const uriRegex = /[A-Z a-z 0-9 ; , \/ ? : @ & = + $ \- _ . ! ~ * ' ( ) #]+/ig
-        const uriRegex = /[A-Z a-z 0-9]+/ig
+        const uriRegex = /[A-Z a-z 0-9 ; , \/ ? : @ & = + $ \- _ . ! ~ * ' #]+/ig
         const escape = out.match(uriRegex)
         if (escape == null) {
             return encoder(str)
@@ -52,12 +50,16 @@ export default class ChFax {
             const joined:string[] = []
             const breaked = out.split(uriRegex)
             for (let i = 0; i < breaked.length; i += 1) {
+                if (breaked[i].length <= 0) {
+                    continue
+                }
                 joined.push(encoder(breaked[i]))
                 if (i < escape.length) {
-                    joined.push(escape[i])
+                    // space -> plus
+                    joined.push(escape[i].replace(/\s/ig, "%20"))
                 }
             }
-            return joined 
+            return joined.join("")
         }
     }
     private static parseTime(str:string) {
@@ -248,6 +250,7 @@ export default class ChFax {
                     filepath: `http://${ip}:${port}${keyname}`,
                     receiveTime: createTime,
                     checkTime,
+                    images: [],
                 })
             }).get().filter((v) => v != null)
             return contents
@@ -276,9 +279,6 @@ export default class ChFax {
                 }
             }
         })
-        for (const fax of faxes) {
-            console.log(fax.name)
-        }
         return faxes
     }
     /**

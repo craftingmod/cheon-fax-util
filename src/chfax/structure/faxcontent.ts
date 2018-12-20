@@ -7,6 +7,8 @@ export class FaxContent implements FaxInfo {
     public readonly name:string
     public readonly receiveTime:number
     public readonly checkTime:number
+    // just helper
+    public images:string[]
     public constructor(info:FaxInfo) {
         this.dateid = info.dateid
         this.uid = info.uid
@@ -14,6 +16,10 @@ export class FaxContent implements FaxInfo {
         this.name = info.name
         this.receiveTime = info.receiveTime
         this.checkTime = info.checkTime
+        this.images = []
+    }
+    public get uidString() {
+        return this.uid + "" + this.dateid
     }
     public asFaxInfo():FaxInfo {
         return {
@@ -23,6 +29,7 @@ export class FaxContent implements FaxInfo {
             name: this.name,
             receiveTime: this.receiveTime,
             checkTime: this.checkTime,
+            images: this.images,
         }
     }
     public getElement(index:number | string) {
@@ -51,4 +58,5 @@ export interface FaxInfo {
     name:string
     receiveTime:number
     checkTime:number
+    images:string[]
 }
